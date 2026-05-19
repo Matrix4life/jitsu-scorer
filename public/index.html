@@ -591,7 +591,7 @@
         }
 
         animFrameId = requestAnimationFrame(runDetection);
-        geminiIntervalId = setInterval(classifyFrame, 3000);
+        geminiIntervalId = setInterval(classifyFrame, 6000);
 
       } catch (err) {
         statusEl.textContent = 'Camera error: ' + (err.message || 'Could not start camera');
