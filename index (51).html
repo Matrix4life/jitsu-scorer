@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jiu-Jitsu Pose Scorer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f5f5f5;
+      color: #333;
+    }
+
+    .container {
+      max-width: 480px;
+      margin: 0 auto;
+      padding: 1rem;
+      background: white;
+      min-height: 100vh;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 1.5rem;
+      padding-top: 0.5rem;
+    }
+
+    .header h1 { font-size: 24px; margin-bottom: 0.25rem; }
+    .header p  { font-size: 14px; color: #666; }
+
+    .camera-container {
+      position: relative;
+      background: #000;
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 1.5rem;
+      aspect-ratio: 3/4;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 360px;
+    }
+
+    #video {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      object-fit: cover;
+    }
+
+    #canvas {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+    }
+
+    .status {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      background: rgba(0,0,0,0.7);
+      color: white;
+      padding: 10px;
+      text-align: center;
+      font-size: 13px;
+      z-index: 10;
+    }
+
+    .score-display {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 1.5rem;
+    }
+
+    .score-card {
+      background: #f9f9f9;
+      padding: 1rem;
+      border-radius: 12px;
+      text-align: center;
+      border: 1px solid #eee;
+    }
+
+    .score-card p { font-size: 13px; color: #666; margin-bottom: 8px; }
+    .score-card .number { font-size: 40px; font-weight: 600; color: #000; }
+    .score-card .position { font-size: 12px; color: #999; margin-top: 8px; min-height: 18px; }
+
+    .score-card.active { border-color: #378add; background: #eef4fc; }
+
+    .quick-buttons {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 1rem;
+    }
+
+    .controls {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 1.5rem;
+    }
+
+    button {
+      padding: 12px;
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+      touch-action: manipulation;
+    }
+
+    button:hover { background: #f5f5f5; border-color: #999; }
+    button:active { transform: scale(0.98); }
+
+    button.primary {
+      background: #378add;
+      color: white;
+      border-color: #378add;
+    }
+
+    button.primary:hover { background: #2a68b8; border-color: #2a68b8; }
+
+    .log {
+      background: white;
+      border: 1px solid #eee;
+      border-radius: 12px;
+      padding: 1rem;
+      max-height: 180px;
+      overflow-y: auto;
+      font-size: 12px;
+    }
+
+    .log-entry {
+      padding: 8px 0;
+      border-bottom: 1px solid #eee;
+      display: flex;
+      justify-content: space-between;
+      color: #666;
+    }
+
+    .log-entry:last-child { border-bottom: none; }
+    .log-entry .tech { color: #333; font-weight: 500; }
+    .log-entry .pts  { color: #378add; font-weight: 600; }
+
+    .empty { text-align: center; color: #999; padding: 1rem 0; }
+
+    @media (prefers-color-scheme: dark) {
+      body { background: #1a1a1a; color: #fff; }
+      .container { background: #242424; }
+      .header p { color: #999; }
+      .score-card { background: #333; border-color: #444; }
+      .score-card p { color: #999; }
+      .score-card .number { color: #fff; }
+      .score-card .position { color: #666; }
+      .score-card.active { background: #1a2e45; border-color: #378add; }
+      button { background: #333; border-color: #444; color: #fff; }
+      button:hover { background: #444; border-color: #555; }
+      .log { background: #333; border-color: #444; }
+      .log-entry { border-bottom-color: #444; color: #999; }
+      .log-entry .tech { color: #fff; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Jiu-Jitsu Pose Scorer</h1>
+      <p>AI-powered position detection</p>
+    </div>
+
+    <div class="camera-container">
+      <video id="video" autoplay playsinline muted></video>
+      <canvas id="canvas"></canvas>
+      <div class="status" id="status">Toggle camera to start</div>
+    </div>
+
+    <div class="score-display">
+      <div class="score-card active" id="cardA">
+        <p>Fighter A <span style="font-size:10px;color:#378add">(active)</span></p>
+        <div class="number" id="scoreA">0</div>
+        <div class="position" id="posA">—</div>
+      </div>
+      <div class="score-card" id="cardB">
+        <p>Fighter B</p>
+        <div class="number" id="scoreB">0</div>
+        <div class="position" id="posB">—</div>
+      </div>
+    </div>
+
+    <div class="quick-buttons">
+      <button class="primary" onclick="scoreSubmission()">Submission (+15)</button>
+      <button onclick="swapFighter()">Swap Fighter</button>
+    </div>
+
+    <div class="controls">
+      <button onclick="resetMatch()">Reset</button>
+      <button onclick="toggleCamera()">Toggle Camera</button>
+    </div>
+
+    <div class="log">
+      <div id="logContainer" class="empty">No actions yet</div>
+    </div>
+  </div>
+
+  <script>
+    let scoreA = 0, scoreB = 0;
+    let currentFighter = 'A';
+    let matchLog = [];
+    let lastPosition = { A: null, B: null };
+    let cameraActive = false;
+    let lastScoredTime = 0;
+    let animFrameId = null;
+    let detector = null;
+    let modelLoaded = false;
+
+    let fighterIdMap = {};
+    let nextAssign = 'A';
+    let currentPoseByFighter = {};
+
+    const SMOOTH_WINDOW = 3;
+    const CONFIRM_THRESHOLD = 2;
+    let classificationBuffer = [];
+
+    const positionScores = {
+      guard: 0, mount: 4, side_control: 3,
+      back_control: 4, knee_on_belly: 2, standing: 0, unknown: 0
+    };
+
+    const videoEl  = document.getElementById('video');
+    const canvasEl = document.getElementById('canvas');
+    const ctx      = canvasEl.getContext('2d');
+    const statusEl = document.getElementById('status');
+
+    const BONE_PAIRS = [
+      ['left_shoulder','right_shoulder'],
+      ['left_shoulder','left_elbow'],['left_elbow','left_wrist'],
+      ['right_shoulder','right_elbow'],['right_elbow','right_wrist'],
+      ['left_shoulder','left_hip'],['right_shoulder','right_hip'],
+      ['left_hip','right_hip'],
+      ['left_hip','left_knee'],['left_knee','left_ankle'],
+      ['right_hip','right_knee'],['right_knee','right_ankle']
+    ];
+
+    const FIGHTER_COLORS = {
+      A: { joint: '#378add', bone: 'rgba(55,138,221,0.6)' },
+      B: { joint: '#e05c2a', bone: 'rgba(224,92,42,0.6)' },
+      unknown: { joint: '#aaa', bone: 'rgba(150,150,150,0.4)' }
+    };
+
+    function loadScript(src) {
+      return new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = src;
+        s.onload = resolve;
+        s.onerror = () => reject(new Error('Failed to load: ' + src));
+        document.head.appendChild(s);
+      });
+    }
+
+    async function loadModel() {
+      statusEl.textContent = 'Loading TensorFlow.js...';
+      await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.11.0/dist/tf.min.js');
+
+      statusEl.textContent = 'Loading pose model...';
+      await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.min.js');
+
+      await window.tf.setBackend('webgl');
+      await window.tf.ready();
+
+      detector = await window.poseDetection.createDetector(
+        window.poseDetection.SupportedModels.MoveNet,
+        {
+          modelType: window.poseDetection.movenet.modelType.MULTIPOSE_LIGHTNING,
+          enableTracking: true,
+          trackerType: window.poseDetection.TrackerType.BoundingBox
+        }
+      );
+
+      modelLoaded = true;
+      statusEl.textContent = 'Detecting positions...';
+    }
+
+    function drawPose(pose, fighter) {
+      const kpMap = {};
+      pose.keypoints.forEach(kp => { kpMap[kp.name] = kp; });
+      const colors = FIGHTER_COLORS[fighter] || FIGHTER_COLORS.unknown;
+
+      ctx.strokeStyle = colors.bone;
+      ctx.lineWidth = 2.5;
+      BONE_PAIRS.forEach(([a, b]) => {
+        const kpA = kpMap[a], kpB = kpMap[b];
+        if (kpA && kpB && kpA.score > 0.25 && kpB.score > 0.25) {
+          ctx.beginPath();
+          ctx.moveTo(kpA.x, kpA.y);
+          ctx.lineTo(kpB.x, kpB.y);
+          ctx.stroke();
+        }
+      });
+
+      ctx.fillStyle = colors.joint;
+      pose.keypoints.forEach(kp => {
+        if (kp.score > 0.25) {
+          ctx.beginPath();
+          ctx.arc(kp.x, kp.y, 5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      });
+
+      const nose = kpMap['nose'];
+      if (nose && nose.score > 0.25 && fighter !== 'unknown') {
+        ctx.fillStyle = colors.joint;
+        ctx.font = 'bold 14px sans-serif';
+        ctx.fillText(fighter, nose.x - 5, nose.y - 12);
+      }
+    }
+
+    function normalizeKPs(pose) {
+      const W = videoEl.videoWidth  || canvasEl.width;
+      const H = videoEl.videoHeight || canvasEl.height;
+      const out = {};
+      pose.keypoints.forEach(k => {
+        if (k.score > 0.25) out[k.name] = { x: k.x / W, y: k.y / H };
+      });
+      return out;
+    }
+
+    function bodyCenter(nkp) {
+      const pts = ['left_shoulder','right_shoulder','left_hip','right_hip']
+        .filter(n => nkp[n]).map(n => nkp[n]);
+      if (pts.length < 2) return null;
+      return {
+        x: pts.reduce((s,p) => s + p.x, 0) / pts.length,
+        y: pts.reduce((s,p) => s + p.y, 0) / pts.length
+      };
+    }
+
+    function avg(...vals) {
+      const v = vals.filter(x => x != null);
+      return v.length ? v.reduce((s,x) => s + x, 0) / v.length : null;
+    }
+
+    async function runDetection() {
+      if (!cameraActive || !modelLoaded || videoEl.readyState < 2) {
+        if (cameraActive) animFrameId = requestAnimationFrame(runDetection);
+        return;
+      }
+
+      try {
+        const poses = await detector.estimatePoses(videoEl);
+        ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+
+        if (poses.length === 0) {
+          if (cameraActive) animFrameId = requestAnimationFrame(runDetection);
+          return;
+        }
+
+        const posesWithCenter = poses.map(pose => {
+          const nkp = normalizeKPs(pose);
+          const c   = bodyCenter(nkp);
+          return { pose, center: c };
+        }).filter(p => p.center !== null);
+
+        let grapplePair = null;
+        if (posesWithCenter.length >= 2) {
+          let minDist = Infinity;
+          for (let i = 0; i < posesWithCenter.length; i++) {
+            for (let j = i + 1; j < posesWithCenter.length; j++) {
+              const dx = posesWithCenter[i].center.x - posesWithCenter[j].center.x;
+              const dy = posesWithCenter[i].center.y - posesWithCenter[j].center.y;
+              const d  = Math.sqrt(dx*dx + dy*dy);
+              if (d < minDist) { minDist = d; grapplePair = [i, j]; }
+            }
+          }
+        } else if (posesWithCenter.length === 1) {
+          grapplePair = [0];
+        }
+
+        const grappleIds = new Set(
+          (grapplePair || []).map(i => posesWithCenter[i]?.pose.id).filter(id => id != null)
+        );
+
+        Object.keys(fighterIdMap).forEach(id => {
+          if (!grappleIds.has(Number(id))) delete fighterIdMap[id];
+        });
+
+        grappleIds.forEach(id => {
+          if (!fighterIdMap[id]) {
+            const taken = Object.values(fighterIdMap);
+            if (!taken.includes('A'))      fighterIdMap[id] = 'A';
+            else if (!taken.includes('B')) fighterIdMap[id] = 'B';
+          }
+        });
+
+        const poseByFighter = {};
+        poses.forEach(pose => {
+          const f = fighterIdMap[pose.id];
+          if (f) poseByFighter[f] = pose;
+        });
+
+        currentPoseByFighter = poseByFighter;
+
+        poses.forEach(pose => {
+          const f = fighterIdMap[pose.id] || 'unknown';
+          drawPose(pose, f);
+        });
+
+      } catch (e) {
+        console.error('Detection error:', e.message);
+      }
+
+      if (cameraActive) animFrameId = requestAnimationFrame(runDetection);
+    }
+
+    function extractKeypoints(pose) {
+      if (!pose) return null;
+      const JOINTS = ['nose','left_shoulder','right_shoulder','left_elbow','right_elbow',
+                      'left_wrist','right_wrist','left_hip','right_hip',
+                      'left_knee','right_knee','left_ankle','right_ankle'];
+      const out = {};
+      (pose.keypoints || []).forEach(kp => {
+        if (JOINTS.includes(kp.name) && (kp.score ?? 1) > 0.2) {
+          out[kp.name] = {
+            x: Math.round((kp.x / canvasEl.width)  * 100) / 100,
+            y: Math.round((kp.y / canvasEl.height) * 100) / 100
+          };
+        }
+      });
+      return Object.keys(out).length ? out : null;
+    }
+
+    function smoothedResult(buf) {
+      if (buf.length < SMOOTH_WINDOW) return null;
+      const recent = buf.slice(-SMOOTH_WINDOW);
+      const counts = {};
+      recent.forEach(r => {
+        const key = `${r.position}|${r.top_fighter}`;
+        counts[key] = (counts[key] || 0) + 1;
+      });
+      const best = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+      if (best[1] >= CONFIRM_THRESHOLD) {
+        const [pos, top] = best[0].split('|');
+        return { position: pos, top_fighter: top === 'null' ? null : top };
+      }
+      return null;
+    }
+
+    async function classifyFrame() {
+      if (!cameraActive || videoEl.readyState < 2) return;
+
+      try {
+        const imageData = canvasEl.toDataURL('image/jpeg', 0.7);
+
+        const keypointData = {
+          A: extractKeypoints(currentPoseByFighter['A']),
+          B: extractKeypoints(currentPoseByFighter['B'])
+        };
+
+        const resp = await fetch('/api/classify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image: imageData, keypoints: keypointData })
+        });
+
+        if (!resp.ok) throw new Error('Server error ' + resp.status);
+        const result = await resp.json();
+
+        if (result.error) {
+          const msg = result.error || '';
+          if (msg.includes('OPENAI_API_KEY not set')) {
+            statusEl.textContent = 'Add OPENAI_API_KEY in Railway Secrets';
+          } else if (msg.includes('401') || msg.includes('Incorrect API key')) {
+            statusEl.textContent = 'OpenAI key invalid';
+          } else if (msg.includes('429') || msg.includes('rate limit')) {
+            statusEl.textContent = 'Rate limit — retrying in 3s';
+          } else {
+            statusEl.textContent = 'AI error: ' + msg.slice(0, 60);
+          }
+          return;
+        }
+
+        const { position, top_fighter, confidence } = result;
+
+        classificationBuffer.push({ position: position || 'unknown', top_fighter: top_fighter || null });
+        if (classificationBuffer.length > SMOOTH_WINDOW * 2) classificationBuffer.shift();
+
+        const confirmed = smoothedResult(classificationBuffer);
+
+        if (!confirmed || confirmed.position === 'unknown') {
+          const raw = position ? position.replace(/_/g,' ').toUpperCase() : 'unclear';
+          statusEl.textContent = `AI sensing… (${raw}) — confirming`;
+          return;
+        }
+
+        const { position: cPos, top_fighter: cTop } = confirmed;
+        const label = cPos.replace(/_/g, ' ').toUpperCase();
+        const conf  = confidence === 'high' ? '' : confidence === 'medium' ? ' ?' : ' ??';
+        statusEl.textContent = `AI: ${label}${conf} — ${cTop ? 'Fighter ' + cTop + ' on top' : 'neutral'}`;
+
+        if (cTop) {
+          const botFighter = cTop === 'A' ? 'B' : 'A';
+          document.getElementById('pos' + cTop).textContent = label + conf;
+          document.getElementById('pos' + botFighter).textContent =
+            cPos === 'guard' ? 'GUARD (BTM)' : '(bottom)';
+        } else {
+          document.getElementById('posA').textContent = label;
+          document.getElementById('posB').textContent = label;
+        }
+
+        if (confidence !== 'low') {
+          checkPositionChange(cPos, cTop);
+        }
+
+      } catch (e) {
+        console.error('classifyFrame error:', e.message);
+      }
+    }
+
+    function checkPositionChange(newPosition, topFighter) {
+      if (!topFighter || newPosition === 'unknown' || newPosition === 'standing') return;
+      const now = Date.now();
+      const prevTop   = lastPosition._topFighter;
+      const prevPos   = lastPosition._position;
+      if ((newPosition !== prevPos || topFighter !== prevTop) && now - lastScoredTime > 2000) {
+        const points = positionScores[newPosition] || 0;
+        if (points > 0) {
+          lastPosition._position   = newPosition;
+          lastPosition._topFighter = topFighter;
+          lastScoredTime = now;
+          addScore(newPosition.replace(/_/g,' ') + ' position', points, true, topFighter);
+        }
+      }
+    }
+
+    async function toggleCamera() {
+      if (!cameraActive) {
+        await startCamera();
+      } else {
+        stopCamera();
+      }
+    }
+
+    async function getUserMediaWithFallback() {
+      const constraints = [
+        { video: { facingMode: 'environment' } },
+        { video: { facingMode: 'user' } },
+        { video: true }
+      ];
+      for (const c of constraints) {
+        try {
+          return await navigator.mediaDevices.getUserMedia(c);
+        } catch (e) {
+          console.warn('Camera constraint failed:', e.name);
+        }
+      }
+      throw new Error('No camera available.');
+    }
+
+    let geminiIntervalId = null;
+
+    async function startCamera() {
+      try {
+        statusEl.textContent = 'Requesting camera access...';
+
+        const stream = await getUserMediaWithFallback();
+        videoEl.srcObject = stream;
+
+        await new Promise((resolve, reject) => {
+          videoEl.onloadedmetadata = resolve;
+          videoEl.onerror = reject;
+          setTimeout(() => resolve(), 3000);
+        });
+
+        try { await videoEl.play(); } catch (_) {}
+
+        const vw = videoEl.videoWidth  || 480;
+        const vh = videoEl.videoHeight || 640;
+        canvasEl.width  = vw;
+        canvasEl.height = vh;
+
+        cameraActive = true;
+
+        if (!modelLoaded) {
+          await loadModel();
+        } else {
+          statusEl.textContent = 'Detecting positions...';
+        }
+
+        animFrameId = requestAnimationFrame(runDetection);
+        geminiIntervalId = setInterval(classifyFrame, 3000);
+
+      } catch (err) {
+        statusEl.textContent = 'Camera error: ' + (err.message || 'Could not start camera');
+        console.error(err);
+      }
+    }
+
+    function stopCamera() {
+      cameraActive = false;
+      if (animFrameId)      cancelAnimationFrame(animFrameId);
+      if (geminiIntervalId) clearInterval(geminiIntervalId);
+      geminiIntervalId = null;
+      if (videoEl.srcObject) videoEl.srcObject.getTracks().forEach(t => t.stop());
+      videoEl.srcObject = null;
+      ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+      statusEl.textContent = 'Camera off';
+    }
+
+    function addScore(technique, points, isAuto = false, fighter = currentFighter) {
+      if (fighter === 'A') scoreA += points;
+      else scoreB += points;
+      matchLog.push({ fighter, technique, points, auto: isAuto });
+      updateScoreDisplay();
+    }
+
+    function scoreSubmission() {
+      addScore('Submission', 15, false, currentFighter);
+    }
+
+    function swapFighter() {
+      Object.keys(fighterIdMap).forEach(id => {
+        fighterIdMap[id] = fighterIdMap[id] === 'A' ? 'B' : 'A';
+      });
+      currentFighter = currentFighter === 'A' ? 'B' : 'A';
+      [scoreA, scoreB] = [scoreB, scoreA];
+      const posA = document.getElementById('posA').textContent;
+      const posB = document.getElementById('posB').textContent;
+      document.getElementById('posA').textContent = posB;
+      document.getElementById('posB').textContent = posA;
+      updateScoreDisplay();
+      if (cameraActive) statusEl.textContent = 'Fighters swapped';
+    }
+
+    function updateScoreDisplay() {
+      document.getElementById('scoreA').textContent = scoreA;
+      document.getElementById('scoreB').textContent = scoreB;
+
+      const logEl = document.getElementById('logContainer');
+      if (matchLog.length === 0) {
+        logEl.innerHTML = '<div class="empty">No actions yet</div>';
+      } else {
+        logEl.innerHTML = [...matchLog].reverse().map(e => `
+          <div class="log-entry">
+            <span><span class="tech">Fighter ${e.fighter}</span> — ${e.technique}${e.auto ? ' (auto)' : ''}</span>
+            <span class="pts">+${e.points}</span>
+          </div>
+        `).join('');
+      }
+    }
+
+    function resetMatch() {
+      if (confirm('Reset all scores?')) {
+        scoreA = scoreB = 0;
+        matchLog = [];
+        lastPosition = {};
+        lastScoredTime = 0;
+        fighterIdMap = {};
+        updateScoreDisplay();
+        document.getElementById('posA').textContent = '—';
+        document.getElementById('posB').textContent = '—';
+        statusEl.textContent = cameraActive ? 'Detecting positions...' : 'Toggle camera to start';
+      }
+    }
+
+    updateScoreDisplay();
+  </script>
+</body>
+</html>

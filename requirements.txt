@@ -1,0 +1,2 @@
+# Empty — using Python standard library only
+# (urllib, json, http.server are built-in)
