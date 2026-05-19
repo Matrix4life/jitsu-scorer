@@ -8,64 +8,167 @@ import mimetypes
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
 OPENAI_URL = 'https://api.openai.com/v1/chat/completions'
 
-BJJ_PROMPT = """You are an expert BJJ referee analyzing a live match frame by frame.
+BJJ_PROMPT = """You are a BJJ position identifier. Your ONLY job: Identify which of 9 positions you see.
 
-Two fighters are visible: Fighter A (BLUE skeleton) and Fighter B (ORANGE skeleton).
-Your job: identify the current position and who has top control.
+DO NOT try to detect sweeps, escapes, passes, or submissions. ONLY positions.
 
-KEYPOINT COORDINATES:
-- (0,0) = top-left of frame; (1,1) = bottom-right
-- x: 0 = left edge, 1 = right edge
-- y: 0 = top of frame, 1 = bottom of frame
-- Higher y value = lower in frame
+Two fighters: A (BLUE skeleton) and B (ORANGE skeleton).
 
-POSITION DETECTION RULES (apply biomechanics logic):
+COORDINATE SYSTEM:
+- x: 0=left edge, 1=right edge
+- y: 0=top of frame (higher up), 1=bottom of frame (lower down)
+- LOWER y value = HIGHER in frame = ON TOP = dominant position
 
-**MOUNT (4 pts):**
-- Top fighter's hips are AT or ABOVE bottom fighter's chest/shoulders
-- Top fighter's knees are OUTSIDE bottom fighter's hips (straddling)
-- Verify: top_hips_y <= bottom_shoulders_y + 0.08
-- Verify: Both bodies roughly vertical (not horizontal)
+ALGORITHM (follow strictly):
 
-**GUARD (0 pts, defensive):**
-- Bottom fighter's KNEES are RAISED (knees_y < hips_y by at least 0.06)
-- Bottom fighter's legs are IN FRONT OF or around top fighter
-- Bodies overlapping in horizontal plane (distance between centers < 0.4)
-- Verify: bottom_left_knee.y < bottom_left_hip.y - 0.06
+STEP 1: Calculate each fighter's body center
+- Fighter A center_y = average(A_shoulders_y, A_hips_y)
+- Fighter B center_y = average(B_shoulders_y, B_hips_y)
+- Who has lower center_y? → They are on top
 
-**SIDE CONTROL (3 pts):**
-- Top fighter is lying PERPENDICULAR across bottom fighter's torso
-- Top fighter's shoulders are WIDE APART (horizontal span > 0.22)
-- Top fighter's hips are at bottom fighter's chest/shoulder level
-- Verify: abs(top_left_shoulder.x - top_right_shoulder.x) > 0.22
+STEP 2: Measure key distances
+- Shoulder width = abs(left_shoulder.x - right_shoulder.x)
+- Knee height = are knees ABOVE hips? (knees_y < hips_y?)
+- Body distance = distance between centers
+- Hips height difference = abs(A_hips_y - B_hips_y)
 
-**KNEE ON BELLY (2 pts):**
-- Top fighter has ONE KNEE pressing into bottom fighter's abdomen/ribs
-- That knee sits between bottom's shoulder and hip levels
-- Other leg is POSTED OUT for balance
-- Verify: bottom_shoulders_y < top_knee_y < bottom_hips_y + 0.05
+STEP 3: Match to ONE position using these rules ONLY:
 
-**BACK CONTROL (4 pts):**
-- Top fighter is BEHIND bottom fighter
-- Bodies are VERY CLOSE and roughly same height in frame
-- Verify: distance between centers < 0.28
-- Verify: abs(top_hips_y - bottom_hips_y) < 0.12
+---
 
-**STANDING:**
-- Both fighters are UPRIGHT on their feet
-- Large vertical separation (distance > 0.5)
+**POSITION 1: MOUNT**
+- TOP fighter's hips are ABOVE bottom fighter's shoulders
+  → Check: top_hips_y < bottom_shoulders_y - 0.09
+- TOP fighter's knees are SPREAD WIDE (straddling)
+  → Check: top_left_knee.x and top_right_knee.x are far apart
+- Bodies form T-shape with top on bottom
+- Bottom fighter is on back, arms extended
+→ CONFIDENCE: HIGH only if hips clearly above shoulders AND knees spread
+→ CONFIDENCE: LOW if uncertain
 
-**UNKNOWN:**
-- Positions don't clearly match above rules
+---
 
-DECISION LOGIC:
-1. Look at KEYPOINT DATA first — it is objective and reliable
-2. Use the image to verify and add context
-3. Determine TOP FIGHTER: who is physically higher/controlling?
-4. Return confidence: "high", "medium", or "low"
+**POSITION 2: SIDE CONTROL**
+- TOP fighter is PERPENDICULAR (90 degrees) across bottom's torso
+- TOP fighter's SHOULDERS are WIDE (> 0.23 apart horizontally)
+  → Check: abs(top_left_shoulder.x - top_right_shoulder.x) > 0.23
+- TOP fighter's hips are at BOTTOM fighter's CHEST/SHOULDER level
+  → Check: bottom_shoulders_y - 0.05 < top_hips_y < bottom_hips_y
+- Bodies are NOT stacked vertically (perpendicular, not mount)
+→ CONFIDENCE: HIGH if shoulder width > 0.23 AND hips at correct height
+→ CONFIDENCE: LOW otherwise
 
-Output ONLY a JSON object, no text before or after:
-{"position": "mount"|"guard"|"side_control"|"knee_on_belly"|"back_control"|"standing"|"unknown", "top_fighter": "A"|"B"|null, "confidence": "high"|"medium"|"low"}
+---
+
+**POSITION 3: BACK CONTROL**
+- TOP fighter is BEHIND bottom fighter (both parallel)
+- Bodies are VERY CLOSE (distance < 0.26)
+  → Check: distance between centers < 0.26
+- HIPS are at SAME HEIGHT (within 0.09)
+  → Check: abs(top_hips_y - bottom_hips_y) < 0.09
+- Bodies are parallel (same orientation), not perpendicular
+→ CONFIDENCE: HIGH if both distance < 0.26 AND hips aligned
+→ CONFIDENCE: LOW if uncertain
+
+---
+
+**POSITION 4: NORTH-SOUTH**
+- Both fighters UPRIGHT (standing or high posture)
+- Bodies PERPENDICULAR (90 degrees to each other)
+- Top fighter's head toward bottom's legs/feet area
+- Bodies VERY CLOSE (distance < 0.36)
+  → Check: distance between centers < 0.36
+- Both have shoulders above hips (both upright)
+→ CONFIDENCE: HIGH if perpendicular AND close AND both upright
+→ CONFIDENCE: LOW if uncertain
+
+---
+
+**POSITION 5: CLOSED GUARD**
+- BOTTOM fighter has BOTH KNEES RAISED (legs pulled up)
+  → Check: bottom_left_knee.y < bottom_hips_y - 0.10 AND bottom_right_knee.y < bottom_hips_y - 0.10
+- Knees are CLOSE TOGETHER (not spread wide)
+  → Check: abs(bottom_left_knee.x - bottom_right_knee.x) < 0.15
+- Bodies OVERLAP (distance < 0.36)
+  → Check: distance between centers < 0.36
+- Top fighter is BETWEEN bottom's knees
+→ CONFIDENCE: HIGH if BOTH knees up AND close together AND overlapping
+→ CONFIDENCE: LOW if uncertain
+
+---
+
+**POSITION 6: OPEN GUARD**
+- BOTTOM fighter has BOTH KNEES RAISED (legs up)
+  → Check: bottom_left_knee.y < bottom_hips_y - 0.09 AND bottom_right_knee.y < bottom_hips_y - 0.09
+- Knees are SPREAD WIDE APART (not close)
+  → Check: abs(bottom_left_knee.x - bottom_right_knee.x) > 0.18
+- Bodies OVERLAP but less contact than Closed Guard
+  → Check: distance between centers < 0.40
+- Legs are in FRONT of top (not wrapped around)
+→ CONFIDENCE: HIGH if BOTH knees up AND wide apart AND overlapping
+→ CONFIDENCE: LOW if uncertain
+
+---
+
+**POSITION 7: HALF GUARD**
+- BOTTOM fighter has ASYMMETRIC leg position
+  → One knee is UP (raised above hip)
+  → Other leg is EXTENDED or LESS raised
+  → Check: one_knee.y < hips_y AND other_knee.y >= hips_y OR one_leg_extended
+- Bodies OVERLAP (distance < 0.38)
+  → Check: distance between centers < 0.38
+- NOT symmetrical like Closed Guard
+- One of bottom's legs wrapping around one of top's legs
+→ CONFIDENCE: HIGH if clear asymmetry in leg positions
+→ CONFIDENCE: LOW if both legs equally raised (that's Closed Guard)
+
+---
+
+**POSITION 8: BUTTERFLY GUARD**
+- BOTTOM fighter on back with BOTH FEET on GROUND (not extended)
+- BOTH KNEES RAISED and CLOSE TOGETHER (butterfly shape)
+  → Check: bottom_left_knee.y < bottom_hips_y - 0.08 AND bottom_right_knee.y < bottom_hips_y - 0.08
+  → Check: abs(bottom_left_knee.x - bottom_right_knee.x) < 0.14 (knees close)
+- Feet/ankles are TOGETHER or TOUCHING (soles facing up)
+  → Check: bottom_left_ankle close to bottom_right_ankle
+- Feet pressing into top fighter's hips/torso
+- Bodies OVERLAP (distance < 0.36)
+→ CONFIDENCE: HIGH if knees raised AND together AND feet together
+→ CONFIDENCE: LOW if uncertain
+
+---
+
+**POSITION 9: TURTLE**
+- BOTTOM fighter on ALL FOURS (hands and knees visible)
+  → Shoulders, hips, knees all visible and engaged
+- BACK is ROUNDED (shoulders/head well above hips)
+  → Check: shoulders_y << hips_y (much higher)
+- BUTT UP, HEAD DOWN (defensive crouch)
+- TOP fighter attacking from behind or side
+→ CONFIDENCE: HIGH if all-fours posture is clear AND back rounded
+→ CONFIDENCE: LOW if uncertain
+
+---
+
+**IF NONE OF THE 9 MATCH:**
+- Return: {"position": "unknown", "top_fighter": null, "confidence": "low"}
+
+---
+
+CRITICAL RULES:
+1. If ANY keypoints are MISSING or have low confidence (< 0.2) → return "unknown"
+2. If you're HESITATING between 2 positions → return "unknown" (don't guess)
+3. NEVER force a match. If unsure, say "unknown" with "low" confidence
+4. Use keypoint measurements as ABSOLUTE TRUTH
+5. Image is secondary context only
+
+OUTPUT: Return ONLY valid JSON, no other text:
+{"position": "mount"|"side_control"|"back_control"|"north_south"|"closed_guard"|"open_guard"|"half_guard"|"butterfly_guard"|"turtle"|"unknown", "top_fighter": "A"|"B"|null, "confidence": "high"|"low"}
+
+EXAMPLE OUTPUTS:
+- {"position": "mount", "top_fighter": "A", "confidence": "high"}
+- {"position": "closed_guard", "top_fighter": "B", "confidence": "high"}
+- {"position": "unknown", "top_fighter": null, "confidence": "low"}
 """
 
 
